@@ -1,0 +1,380 @@
+---
+title: "Final_Project"
+author: "Rom Amsili, Oryan Yehezkel, Din Ezra"
+date: "316509397, 311495824, 206065989"
+output: html_document
+---
+
+```{r setup_Libraries, include=FALSE, echo=FALSE}
+library(tidyverse)
+library(dplyr)
+library(usmap)
+library(zoo)
+library(reshape2)
+library(rvest)
+library(ggpubr)
+library( taRifx )
+library(SciViews)
+library(gganimate)
+library(rgdal)
+library(lubridate)
+library(hrbrthemes)
+library(janitor)
+library(kableExtra)
+```
+
+```{r load_CSVs, include=FALSE, echo=FALSE}
+# load CSVs
+
+concern <- read.csv("civiqs_poll.csv")
+confirm <- read.csv("table-1.csv")
+death <- read.csv("table-2.csv")
+# page<- read_html("https://en.wikipedia.org/wiki/Template:COVID-19_pandemic_data/United_States_medical_cases")
+# confirm <- page %>% html_node(xpath = '//*[@id="mw-content-text"]/div[1]/div[2]/table') %>%
+#   html_table(fill = TRUE)
+# 
+# death<- page %>%
+#   html_node(xpath = '//*[@id="mw-content-text"]/div[1]/div[2]/table')%>%
+#   html_table(fill = TRUE)
+```
+
+We have got 3 Rows(Raw) Tables:\
+concern:\
+```{r concern_table, echo=FALSE}
+colnames(concern)[1] <- "Date"
+head(concern)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+confirm:\
+```{r confirm_table, echo=FALSE}
+head(confirm[c(1:6,57:59)])%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+death:\
+```{r death_table, echo=FALSE}
+head(death[0:10])%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+we creted new table: loc\
+```{r,creating a new table Country-Region, echo=FALSE}
+# creating a new table Country-Region
+
+loc <- data.frame(t(colnames(confirm)))
+names(loc) <- t(confirm[1, ])
+loc <- loc[,-1]
+loc<- loc[,0:56]
+loc <- loc%>%select(-Date)%>%pivot_longer(
+  cols = AK:VI,
+  names_to = "Country",
+  values_to = "Region"
+)
+loc <- loc%>%mutate(Region = sub('\\.\\d*',"",Region))
+head(loc)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## Cleaning Table1 - confirms:
+* the first row will be the header\
+* replace NA with 0\
+* filtered the rows with only dates and removing unnecessary rows\
+* apply date\numerical type on variables\
+```{r set Columns Names and NA, include=FALSE}
+# set Columns Names
+
+colnames(confirm) = confirm[1, ] # the first row will be the header
+confirm <- confirm %>% replace(.,.=="","0") # replace empty string with "0"
+
+```
+split into 2 tables: per_country and daily_total\
+```{r split into 2 tables: per_country and daily_total, include=FALSE}
+# split into 2 tables: per_country and daily_total
+
+confirm_total<- confirm[,57:64]
+confirm_dates<- confirm[,0:56]
+```
+
+```{r filtered the rows with only dates and removing unnecessary rows, include=FALSE}
+# filtered the rows with only dates and removing unnecessary rows
+
+colnames(confirm_total) = c("Date","Daily_confirmed","Total_confirmed","Daily_deaths","Total_deaths","Daily_recovered","Total_recovered","Active")
+confirm_dates <- confirm_dates %>% filter(Date %in% c(Date %>% str_subset("-")))
+confirm_total <- confirm_total %>% filter(Date %in% c(Date %>% str_subset("-")))
+
+```
+
+```{r apply date\numerical type on variables, include=FALSE}
+# date or numerical type on variables and change to positive numbers only
+
+confirm_dates<- confirm_dates %>% mutate(Date = as.Date(Date, format = "%d-%b-%y"))
+confirm_total<- confirm_total %>% mutate(Date = as.Date(Date, format = "%d-%b-%y"))
+confirm_total[,2:8] <- lapply(confirm_total[,2:8],function(x){abs(as.numeric(gsub(",", "", x)))})
+confirm_dates[,2:56] <- lapply(confirm_dates[,2:56],function(x){abs(as.numeric(gsub(",", "", x)))})
+```
+
+```{r, echo=FALSE}
+head(confirm_dates[0:10])%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+head(confirm_total)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+# create Table confirm_dates_longer, its will help us with aggregation and group_by functions.
+```{r create confirm_dates_longer, echo=FALSE}
+# create Table confirm_dates_longer, its will help us with aggregation and group_by functions.
+
+confirm_dates_longer <- confirm_dates%>%pivot_longer(
+  cols = AK:VI,
+  names_to = "Country",
+  values_to = "confirms"
+)
+confirm_dates_longer <- confirm_dates_longer%>%mutate(
+  Country = as.factor(Country),
+  confirms = as.numeric(confirms))
+head(confirm_dates_longer)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+adding Region to confirm_dates_longer table.\
+```{r adding Region to confirm_dates_longer table, message=FALSE, echo = FALSE}
+# adding Region to confirm_dates_longer table
+
+confirm_dates_longer <- left_join(confirm_dates_longer,loc)
+confirm_dates_longer <- confirm_dates_longer %>%relocate(Region,.before = Country)
+head(confirm_dates_longer)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## Exploring Table2 - Deaths:
+same way as Confirms table _ Death_Longer.\
+```{r,cleaning 2nd table, echo=FALSE}
+# cleaning 2nd table
+# write.csv(confirm_total,"death_total.csv")
+colnames(death) = death[1, ]
+death <- death %>% replace(.,.=="","0")
+death <- death[,0:56]
+death <- death %>% filter(Date %in% c(Date %>% str_subset("-")))
+death <- death %>% mutate(Date = as.Date(Date, format = "%d-%b-%y"))
+```
+
+```{r,change to numeric type, include=FALSE}
+# change to numeric type
+
+death[,2:56] <- lapply(death[,2:56],function(x){abs(as.numeric(gsub(",", "", x)))})
+
+```
+
+```{r create death_longer, message=FALSE,echo=FALSE}
+# create death_longer
+
+death_longer <- death%>%pivot_longer(
+  cols = AK:VI,
+  names_to = "Country",
+  values_to = "Death"
+)
+death_longer <- death_longer%>%mutate(
+  Country = as.factor(Country),
+  Death = abs(as.numeric(Death)))
+death_longer <- left_join(death_longer,loc)
+death_longer <- death_longer %>%relocate(Region,.before = Country)
+head(death_longer)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+# Join BTW death&confirm
+```{r join BTW death&confirm, message=FALSE, echo=FALSE}
+# join BTW death&confirm
+
+death_confirm <- full_join(death_longer, confirm_dates_longer) 
+death_confirm[is.na(death_confirm)] <- 0
+head(death_confirm)%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## Features of the data:
+Basic information:\
+```{r Features of the data, echo = FALSE}
+# Minimum and Maximum Deaths and Confirms
+
+mean_general  <-    death_confirm %>% 
+                      summarise(
+                        Type = c("Death","Confirms"),
+                        min = c(min(Death),min(confirms)),
+                        max = c(max(Death),max(confirms)),
+                        mean = trunc(c(mean(Death),mean(confirms))),
+                        median = trunc(c(median(Death),median(confirms))))
+mean_general <- mean_general %>% mutate(std = trunc(c(sd(death_confirm$Death),sd(death_confirm$confirms))))
+mean_general%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+
+mean_by_country_deaths <- aggregate(death_confirm[, 4:5], list(death_confirm$Country), mean)
+mean_by_country_deaths <-  mean_by_country_deaths[order(c(mean_by_country_deaths$confirms,mean_by_country_deaths$death),decreasing = TRUE),]
+mean_by_country_deaths <- mean_by_country_deaths %>% mutate(Death = trunc(Death),
+                                  confirms = trunc(confirms))
+```
+showing the 5 most countries with the highest daily result.\
+```{r, echo = FALSE}
+# showing the 5 most countries with the highest daily result.
+five_countries_most_deaths  <- head(mean_by_country_deaths,5)
+colnames(five_countries_most_deaths)[1] <- "State"
+five_countries_most_deaths[1:3]%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## Visualization\
+```{r Visualization1, message=FALSE, warning=FALSE, echo = FALSE}
+death_confirm_5 <- death_confirm %>%
+                      filter(Country %in% c(five_countries_most_deaths$State))
+
+ggplot(death_confirm_5, aes(y= confirms, x=Date, color = Country))+
+              geom_smooth(aes(color = Country, group = Country),span = 0.25)+
+              geom_hline(yintercept=0, linetype="dashed", color = "red")+
+              labs(title = "Daily Confirms in the 5 most infected countries", x = "Date", y = "Daily Confirms",caption = "We can see the Waves of the Epidemic") + 
+              facet_wrap(~Country, ncol=2)
+
+```
+
+## Location\
+\
+\
+```{r, echo = FALSE}
+temp_countries <- death_confirm_5 %>% group_by(Country) %>% summarise(n=1)
+colnames(temp_countries)[1] <- "state"
+plot_usmap(regions = "state", data = temp_countries, values = "n") +
+  theme(panel.background = element_rect(colour = "black"))+
+  labs(title = "5 Most infected Countries Location", caption = "spread all over USA")+
+    theme(legend.position = "none")
+```
+\
+## Compare Between Confirms & Deaths\
+\
+\
+```{r Visualization, message=FALSE, warning=FALSE,echo = FALSE}
+death_confirm_CA_most <- death_confirm_5 %>% filter(Country == "CA")
+coef <- 764/53711
+ggplot(death_confirm_CA_most, aes(x=Date))+
+              geom_smooth(aes(y= confirms),span = 0.25)+
+              geom_smooth(aes(y= Death/coef),span = 0.25,linetype = "dashed",color = "steelblue1")+
+              geom_hline(yintercept=0, linetype="dashed")+
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Confirms",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coef, name="Deaths")
+  ) + 
+  
+  theme_ipsum() +
+
+  theme(
+    axis.title.y = element_text(color = "black", size=13),
+    axis.title.y.right = element_text(color = "steelblue1", size=13),
+    axis.line.y.right = element_line(color = "steelblue1",linetype="dashed",size = 1),
+    axis.text.y.right = element_text(color = "steelblue1"))+
+  geom_hline(yintercept=0, linetype="dashed", color = "black")+
+  labs(title = "California Daily Confirms & Deaths",
+       x = "Date",caption = "the pick of Deaths come after the pick of confirms")
+```
+\
+\
+```{r, message=FALSE, warning=FALSE, echo = FALSE}
+regions <- death_confirm %>% 
+  mutate(month = month(Date),
+         year = year(Date)) %>% 
+  group_by(Region, year,  month) %>% 
+  summarise(Deaths = sum(Death),Confirms = sum(confirms)) %>%
+  mutate(Date = as.Date(paste(year, month, 1,sep="-"), "%Y-%m-%d"))
+  
+# regions <- regions%>%pivot_longer(
+#   cols = Deaths:Confirms,
+#   names_to = "D_C",
+#   values_to = "count"
+# )
+ggplot(data = regions,aes(x = Date,y = Deaths, color = Region))+
+  geom_smooth(position="dodge",span = 0.25)+
+  theme(legend.position = "bottom")+
+  labs(title = "Monthly Deaths in the Regions", x = "Date", y = "Deaths")
+
+```
+\
+the majority: the second wave was with more deaths cases then the first one.\
+\
+\
+
+```{r visualization_Oryan(no_need), include=FALSE}
+colnames(death_confirm)[1] <- "date"
+colnames(concern)[1] <- "date"
+concern$date <- as.Date(concern$date, '%m/%d/%Y')
+concern_long <- concern %>% pivot_longer(
+  cols = dem:rep,
+  names_to = "poli",
+  values_to = "val"
+)
+
+concern_long_Daily_conf <- left_join(concern_long,confirm_total,by = c("date" = "Date"))
+
+ggplot(concern_long,aes(x = date, y = val, color = poli))+
+  geom_line()+
+  geom_hline(yintercept=0, linetype="dashed", color = "black")+
+  labs(title = "Concerns over Time",
+       subtitle  = "Positive = Concern, Negetive = Unconcern",
+       x = "Date", y = "Concerns", color = "Politicians")+
+  scale_colour_discrete(labels = c("Democrats", "Republicans"))
+```
+# Connection between concern and daily confirm?\
+```{r, warning=FALSE, echo = FALSE}
+coef <- 33725/108
+ggplot(concern_long_Daily_conf,aes(x = date))+
+  geom_line(aes(y = val, color = poli,size = ))+
+  geom_line(aes(y = Daily_confirmed/coef), color="purple4")+
+  scale_y_continuous(
+    
+    # Features of the first axis
+    name = "Concerns",
+    
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coef, name="Daily Confirmed")
+  ) + 
+  
+  theme_ipsum() +
+
+  theme(
+    axis.title.y = element_text(color = "black", size=13),
+    axis.title.y.right = element_text(color = "purple4", size=13),
+    axis.line.y.right = element_line(color = "purple4"),
+    axis.text.y.right = element_text(color = "purple4"))+
+  geom_hline(yintercept=0, linetype="dashed", color = "black")+
+  labs(title = "Concerns over Time",
+       subtitle  = "Positive = Concern, Negetive = Unconcern",
+       x = "Date", color = "Political opinion")+
+  scale_colour_discrete(labels = c("Democrats", "Republicans"))+
+  theme(legend.position="left")
+```
+\
+\
+```{r eval = FALSE,echo = FALSE}
+# x <- confirm_dates_longer %>% mutate(
+#   week = week(Date) + ifelse(year(Date)==2021,53,0),
+#   month = month(Date),
+#   year = year(Date)
+# )
+# x <- x %>% group_by(Country,week, month, year) %>% summarise(mean_confirm = mean(confirms))
+# write.csv(confirm_dates_longer,"x.csv")
+# # adding new column with function that sum infected in the last 14 days/2 weeks
+```
+## Spreading COVID among the countries through time\
+* calculate daily active by excel equation\
+* apply log function because the confirms rise exponential\
+* norm the data BTW 0-1\
+We want to show trends of Spreading\
+```{r, echo = FALSE}
+x <- read.csv("x.csv")
+x <- rename(x,c("state"="Country"))
+x <- x %>% mutate(corrent_conf = ifelse(ln(corrent_conf)<0,0,ln(abs(corrent_conf))))
+x <- x %>% mutate(corrent_conf_norm = (corrent_conf-min(corrent_conf)/(max(corrent_conf)-min(corrent_conf))))
+result <- plot_usmap(regions = "state", data = x, values = "corrent_conf_norm") +
+  theme(panel.background = element_rect(colour = "black"))+
+  scale_fill_distiller(palette = "Spectral") +
+  labs(title = "week: {frame_time}",subtitle = "2 Waves, week 30 & week 48", caption = "week 30 ~ August 2020, week 48 ~ January 2021")+
+    theme(legend.position = "right")+
+  transition_time(week)
+animate(result, fps = 4)
+```
+
+
+
+
+

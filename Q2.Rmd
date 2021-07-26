@@ -1,0 +1,399 @@
+---
+title: "Q2"
+author: "Din, Rom, Oryran"
+date: "15/06/2021"
+output: html_document
+---
+## Exploration of Donald Trump’s tweets during the concern poll. \
+### Using ML algorithems. \
+
+
+```{r, message=FALSE, echo=FALSE,warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rvest)
+library(tidytext)
+library(tm)
+library(lubridate)
+library(dplyr)
+library(stringr)
+library(zoo)
+library(SciViews)
+library(ggpubr)
+library(tidymodels)
+library(kableExtra)
+```
+
+
+```{r read data, echo=FALSE}
+concern <- read.csv("data\civiqs_poll.csv")
+#filename <- file.choose()
+#data <- readRDS(filename)
+data <- readRDS(("data\trump.rds"))
+death_total <- read.csv(("data\death_total.csv"))
+```
+
+## Proccessing 
+* change variables types in order to analyze the data better
+* create ID per tweet and changing the text to lower case
+* convert all the option of the work "Covid"
+* filter only the tweets which relate to Covid-19
+* remove the stop words and ambiguous words like "Trump" and "Positive"
+* Creating a division into emotions for each word\
+\
+\
+Tweets Table:\
+```{r clean data, echo = FALSE}
+head(data) %>% kbl() %>%
+  kable_material(c("striped", "hover"))
+colnames(concern)[1]<-"date"
+concern$date <- as.Date(concern$date, '%m/%d/%Y')
+data <- data %>% mutate(
+                  favorites = as.numeric(favorites),
+                  retweets = as.numeric(retweets),
+                  isRetweet = as.numeric(isRetweet)
+                  )
+
+data$date <- as.Date(data$date, format = "%m/%d/%Y")
+
+trump <- data %>% arrange(date)%>%
+  rowid_to_column(var = "tweet_num")
+
+trump_clean1 <- trump %>%
+  mutate(
+    text = str_replace_all(text, "COVID-19", "COVID_19"),
+    text = str_replace_all(text, "COVID 19", "COVID_19"),
+    text = str_replace_all(text, "Covid-19", "COVID_19"),
+    text = str_replace_all(text, "Covid 19", "COVID_19"),
+    text = str_replace_all(text, "#COVID19", "COVID_19"),
+    text = str_replace_all(text, "#COVID19", "COVID_19"),
+    text = str_replace_all(text, "CoronaVirus", "coronavirus"),
+    text = str_replace_all(text, "Coronavirus", "coronavirus"),
+    text = str_replace_all(text, "CORONAVIRUS", "coronavirus")) %>% 
+  select(-one_of("id"))
+  
+trump_clean <- trump_clean1 %>% filter(
+                  str_detect(text, "COVID_19|spread|virus|corona|Corona"))
+             
+tweet_text <- trump_clean %>% 
+              unnest_tokens(word, text) %>% 
+              anti_join(stop_words,by = "word") %>% 
+              filter(!str_detect(word, "trump|positive|rt|https|t.co|amp|nih|cdcgov|seemacms|scavino45|due|[0-9]"))
+
+score_word <- tweet_text %>%inner_join(get_sentiments("afinn"),by = "word")
+
+data[is.na(data)] <- 0
+
+head(trump_clean) %>% select(-text) %>% kbl() %>%
+  kable_material(c("striped", "hover"))
+
+```
+\
+\
+score word Table:\
+```{r ,echo=FALSE}
+head(score_word) %>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+
+## Data averages
+
+```{r row data, echo=FALSE, message=FALSE, warning=FALSE}
+library(plyr)
+daily_tweet_num = ddply(data,~date,summarise,number_of_distinct_orders=length(unique(id)))
+data <- full_join(data,daily_tweet_num)
+
+sum <- data %>%  summarise(
+            AVG_favorites = mean(favorites),
+            AVG_retweets = mean(retweets),
+            num_retweet = sum(isRetweet),
+            daily_tweet = mean(.$number_of_distinct_orders)
+            )
+sum %>% kbl() %>%
+  kable_material(c("striped", "hover"))
+detach("package:plyr", unload=TRUE)
+```
+
+## Visualizations\
+Text analysis
+
+```{r freq vis, echo=FALSE,message=FALSE}
+most_commom_words <- trump_clean1 %>%
+                      select(text) 
+
+most_commom_words_clean <- most_commom_words %>%
+                             unnest_tokens(word, text) %>% 
+                            anti_join(stop_words) %>%
+                            filter(!word %in% c("realdonaldtrump","trump","rt","https","t.co","amp","nih","cdcgov","seemacms","scavino45","due"))
+most_commom_words_clean %>%
+  count(word, sort = TRUE) %>%
+  top_n(15) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n, fill = n)) +
+  geom_col() +
+  theme_bw() +
+  xlab(NULL) +
+  coord_flip() +
+      labs(x = "",
+      y = "Count",
+      title = "Count of unique words found in tweets", fill ="")
+```
+
+It can be seen that the words related to the corona occupied a significant part of the tweets,\
+yet words like strength and pike played a central part, \
+which can show on some intention the public opinion. \
+
+## We will continue to divide the words into emotions and we will examine whether there are more positive or negative words.
+
+```{r vis nrc, echo=FALSE}
+trump %>%
+  unnest_tokens(word, text) %>%
+  inner_join(get_sentiments("nrc"), by = "word") %>%
+  filter(!str_detect(word,"trump")) %>% 
+  mutate(
+    sentiment = fct_relevel(
+      sentiment, "positive", "anticipation", "joy", "surprise", "trust",
+      "negative", "anger", "disgust", "fear", "sadness"
+    ),
+    sentiment_binary = if_else(sentiment %in% c("positive", "anticipation", "joy", "surprise", "trust"), "positive", "negative")
+  ) %>%
+  count(sentiment_binary, sentiment, word, sort = TRUE) %>%
+  group_by(sentiment) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(y = fct_reorder(word, n), x = n, fill = sentiment_binary)) +
+  geom_col() +
+  guides(fill = FALSE) +
+  facet_wrap(~sentiment, scales = "free",nrow = 2) +
+  labs(
+    title = "Sentiment and frequency of words in briefings",
+    subtitle = "NRC lexicon",
+    y = NULL, x = NULL
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(plot.title = element_text(size=15),
+        strip.text.x = element_text(
+        size = 9
+        ))
+```
+
+Unsurprisingly, the positive words took on a more significant part in Trump's tweets who apparently wanted to raise the morale of the Americans.\
+
+```{r, echo=FALSE, message=FALSE}
+
+colnames(death_total)[2] <- "date"
+death_total$date <- as.Date(death_total$date, format = "%Y-%m-%d")
+
+
+all <-  inner_join(death_total,trump_clean) 
+
+all <- all %>% select(date,retweets, Total_confirmed)
+death_longer <- all%>%pivot_longer(
+  cols = retweets:Total_confirmed,
+  names_to = "factor",
+  values_to = "value"
+)
+
+ggplot(death_longer, aes(x = date, y= value, color = as.factor(factor)))+
+        geom_smooth(formula = y ~ x, method = loess)+
+        labs(color="", title = "The relation between daily retweets and daily confirmed,", subtitle = "During February To April",x="")+
+        facet_wrap(~as.factor(factor), scales = "free_y")+
+        theme(legend.position = "")
+```
+
+## relation between daily retweets and daily confirmed:\
+daily retweets goes UP <=> daily confirmed goes UP\
+it might be because also the rise of the concern among the people.\
+we will check it in the next graph.\n
+\n
+
+```{r, echo=FALSE}
+concern1 <- concern %>% 
+              mutate(
+                mean = (dem+rep)/2
+              )
+p0 <-   ggplot(concern1, aes(x = date, y= mean,color = ifelse(mean < 0,'red','green')))+
+            geom_point()+
+            labs(color="", title = "Average daily concern",x="")+
+            theme(legend.position = "")
+
+covid_twts <- trump_clean %>% filter(str_detect(text, "COVID_19", negate = FALSE))
+p1 <- ggplot(covid_twts, aes(x = date))+
+        geom_density(color = "#C8102E", fill = "#C8102E", alpha = 0.5)+
+        labs(color="", title = "The density of the daily amount of Trump's tweets related to Corona virus,", subtitle = "Throughout March",x="")
+ggarrange(p1,p0,nrow = 2)
+```
+
+As we thought, from March start we can notice an increase in concern among all americans,\
+probably because of the increase in the Covid-19 confirmes.
+
+## Prepper Features to the model
+* positive - sum of all positive words in the tweet\
+* negative - sum of all negative words in the tweet\
+* sum_val - sum of all values words\
+* count_tweet - number of tweet in a day\
+* retweets - number of people that retweet\
+* favorites - Daily likes\
+* sum_7r - mean words value calculate by avg of the previous 7 days\
+
+```{r prepper features to model, echo=FALSE,message=FALSE,include=FALSE}
+
+data_to_model <- score_word %>% group_by(date) %>% summarise(positive = sum(value[which(value>=0)], na.rm=TRUE),
+                                                             negative = sum(value[which(value<0)], na.rm=TRUE),
+                                                             count_tweet = n_distinct(tweet_num),
+                                                             retweets = sum(retweets),
+                                                             favorites = sum(favorites),
+                                                             sum_val = sum(value))
+
+data_to_model$sum_7r <- rollmeanr(data_to_model$sum_val, k = 7, fill = data_to_model$sum_val)
+data_to_model <- data_to_model %>% arrange(date)%>%
+  rowid_to_column(var = "tweet_num")
+
+for( i in 1:7){
+  data_to_model <- rows_update(data_to_model,tibble(tweet_num = i, sum_7r = mean(head(data_to_model$sum_val,i))))
+}
+
+all_data <- left_join(data_to_model, concern)
+tuesd_na <- which( is.na(all_data$rep))
+all_data$rep[tuesd_na] <- all_data$rep[tuesd_na + 1]
+all_data$dem[tuesd_na] <- all_data$dem[tuesd_na + 1]
+all_data$diff[tuesd_na] <- all_data$diff[tuesd_na + 1]
+```
+
+```{r, echo=FALSE}
+data <- all_data
+data <- data %>% mutate(date = as.Date(date))
+head(data) %>% kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+
+### Regration Model
+creating a recipe according to the features calculated before.\
+We didn't use all the features, only the following:
+*dem
+*sum_7r
+*retweets
+*favorites\
+those features were the most informative ones, and the ones which help predict the concern polls most accurate.\
+\
+\
+Dem prediction
+```{r dem, echo=FALSE}
+recipe_dem <- recipe(dem~
+                       sum_7r +
+                       retweets +
+                       favorites,
+                       data=data) %>%
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors()) %>% step_zv(all_predictors())
+
+model <- linear_reg() %>% set_engine("lm")
+
+wk_flow_dem<-workflow()%>%
+  add_model(model)%>%
+  add_recipe(recipe_dem)
+
+
+set.seed(62)
+folds <-vfold_cv(data, v=5)
+
+# set.seed(100)
+fit_rs <- wk_flow_dem %>%fit_resamples(folds)
+
+dem_collect <- collect_metrics(fit_rs, summarize = FALSE)%>%
+                mutate(.estimate = case_when(
+                .metric == "rsq" ~ .estimate**0.5,
+                 TRUE ~ .estimate)) %>%
+                group_by(.metric) %>%
+                summarise(mean = mean(.estimate),
+                 std_err = sd(.estimate))
+dem_collect
+```
+
+```{r,echo=FALSE}
+recipe_diff <- recipe(diff~
+                       sum_7r +
+                       retweets +
+                       favorites,
+                       data=data) %>%
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors()) %>% step_zv(all_predictors())
+
+model <- linear_reg() %>% set_engine("lm")
+
+wk_flow_dem<-workflow()%>%
+  add_model(model)%>%
+  add_recipe(recipe_diff)
+
+
+set.seed(62)
+folds <-vfold_cv(data, v=5)
+
+# set.seed(100)
+fit_rs <- wk_flow_dem %>%fit_resamples(folds)
+
+diff_collect <- collect_metrics(fit_rs, summarize = FALSE)%>%
+                mutate(.estimate = case_when(
+                .metric == "rsq" ~ .estimate**0.5,
+                 TRUE ~ .estimate)) %>%
+                group_by(.metric) %>%
+                summarise(mean = mean(.estimate),
+                 std_err = sd(.estimate))
+diff_collect
+```
+
+```{r,echo=FALSE}
+recipe_rep <- recipe(rep~
+                       sum_7r +
+                       retweets +
+                       favorites,
+                       data=data) %>%
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors()) %>% step_zv(all_predictors())
+
+model <- linear_reg() %>% set_engine("lm")
+
+wk_flow_dem<-workflow()%>%
+  add_model(model)%>%
+  add_recipe(recipe_rep)
+
+
+set.seed(62)
+folds <-vfold_cv(data, v=5)
+
+# set.seed(100)
+fit_rs <- wk_flow_dem %>%fit_resamples(folds)
+
+rep_collect <- collect_metrics(fit_rs, summarize = FALSE)%>%
+                mutate(.estimate = case_when(
+                .metric == "rsq" ~ .estimate**0.5,
+                 TRUE ~ .estimate)) %>%
+                group_by(.metric) %>%
+                summarise(mean = mean(.estimate),
+                 std_err = sd(.estimate))
+```
+
+```{r}
+all1 <-full_join(rep_collect,dem_collect,by = c(".metric", "mean", "std_err"))
+all <- full_join(all1,diff_collect,by = c(".metric", "mean", "std_err"))
+all
+all[1,1] = "rmse_rep"
+all[2,1] = "Pearson's_rep"
+all[3,1] = "rmse_dem"
+all[4,1] = "Pearson's_dem"
+all[5,1] = "rmse_diff"
+all[6,1] = "Pearson's_diff"
+
+all <- all %>% dplyr::rename(Parameter_by_party = .metric)
+all%>% kbl() %>%
+  kable_material(c("striped", "hover"))
+
+
+```
+
+
+## Conclusions from the model \
+We see good correlation between the trump's tweets and the result of the concern poךls.\
+I think the prime minister's tweets directly affect the state of concern in the people,\
+especially among Republicans in the case of Trump. Similarly for the Democrats - who will criticize the mood of the\
+tweets on the various issues and in particular on the corona against the background of the rise in morbidity and mortality.\
+Also any change in the frequency of Trump's tweets, in the way he expresses himself about the corona, in some way affects the American people.

@@ -1,0 +1,265 @@
+---
+title: "Q3"
+author: "Rom, Din, Oryan"
+date: "15/06/2021"
+output: html_document
+---
+## Reasearch Quastion: 
+### Change in retail and recreation during Covid-19 in NY
+
+*Is it possible to predict the number of contagious according to the retail and recreation change in New York state?*
+
+```{r,message=FALSE,echo=FALSE, warning=FALSE}
+all_data <-  read.csv("data\2020_US_Region_Mobility_Report.csv")
+contries <-  read.csv("data\counties_order.csv")
+confirm_dates<-read.csv("data\confirm_dates.csv")
+library(tidyverse)
+library(dplyr)
+library(rvest)
+library(tidytext)
+library(lubridate)
+library(tidymodels)
+library(rsample)
+library(kableExtra)
+
+```
+### About the data
+
+Data collected from Google LLC "Google COVID-19 Community Mobility Reports".\
+https://www.google.com/covid19/mobility/ Accessed: <24.05.20>.\
+
+The data show how visits and length of stay at *different places* change compared to a **baseline**.\
+
+The baseline is the median value, for the corresponding day of the week, during the 5-week period Jan 3–Feb 6, 2020.\
+
+**The mobility data** was collected for *places* like restaurants, cafes, shopping centers, theme parks, museums, libraries, and movie theaters.
+
+
+### Proccessing
+
+```{r,cleaning,echo=FALSE}
+alldata <- all_data %>%
+  select(sub_region_1,census_fips_code,date,
+  retail_and_recreation_percent_change_from_baseline) %>%
+  filter(!census_fips_code %in% NA)
+
+alldata<- full_join(contries,alldata, by=c("X00000"="census_fips_code"))
+
+alldata<- alldata%>%
+  select(US,sub_region_1,date,retail_and_recreation_percent_change_from_baseline)%>%   drop_na(date)
+
+alldata$date<-as.Date(alldata$date,format ="%d/%m/%Y")
+
+head(alldata)%>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+### Retail mean by month
+The average change in retail by month, across United States.
+```{r,echo=FALSE}
+alldata %>% mutate(month = format(date, "%m"),year = format(date,"%Y")) %>% group_by(month,year) %>% summarise(reatil_mean = mean(retail_and_recreation_percent_change_from_baseline, na.rm =TRUE),.groups = "keep")%>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+We can see that during Feb to May there was a huge drop in retail./
+afterwards the change balanced, but still was lower than baseline, in most countries.
+
+### The countries most affected
+The greatest change in retail occurred in those countries:
+```{r,echo=FALSE}
+top_retail<- alldata %>% mutate(month = format(date, "%m"),year = format(date,"%Y")) %>% group_by(US) %>% summarise(retail_average = mean(retail_and_recreation_percent_change_from_baseline, na.rm =TRUE)) %>% arrange(retail_average) %>% head(6)
+
+top_retail<-left_join(top_retail,alldata,by="US") %>% select(US,sub_region_1,retail_average) %>% unique()
+
+top_retail$average_confirmed <- NA
+for(i in 1:nrow(top_retail)){
+  char<-top_retail$US[i]
+  tot<-mean(confirm_dates[[char]],na.rm = TRUE)
+  top_retail$average_confirmed[i]<-tot
+}
+top_retail%>%
+  rename(c("US" = US,
+           "Region name"=sub_region_1,
+           "Retail Average" =retail_average,
+           "Confirmed Average"=average_confirmed)) %>% 
+  kbl() %>% 
+  kable_material(c("striped", "hover"))%>%  column_spec(3,color = "white", background  = "black")
+
+
+bottom_retail<- alldata %>% mutate(month = format(date, "%m"),year = format(date,"%Y")) %>% group_by(US) %>% summarise(retail_average = mean(retail_and_recreation_percent_change_from_baseline, na.rm =TRUE)) %>% arrange(retail_average) %>% tail(6)
+bottom_retail<-left_join(bottom_retail,alldata,by="US") %>% select(US,sub_region_1,retail_average) %>% unique()
+
+bottom_retail$average_confirmed<-NA
+for(i in 1:nrow(bottom_retail)){
+  char<-bottom_retail$US[i]
+  tot<-mean(confirm_dates[[char]],na.rm = TRUE)
+  bottom_retail$average_confirmed[i]<-tot
+}
+bottom_retail%>%
+  rename(c("US" = US,
+           "Region name"=sub_region_1,
+           "Retail Average" =retail_average,
+           "Confirmed Average"=average_confirmed)) %>%
+  kbl() %>%
+  kable_material(c("striped", "hover")) %>%
+  column_spec(3,color = "white", background  = "black")
+```
+
+```{r,prep for graph,echo=FALSE}
+top_retail1<- alldata %>% mutate(month = format(date, "%m"),year = format(date,"%Y")) %>% group_by(US) %>% summarise(retail_average = sum(retail_and_recreation_percent_change_from_baseline, na.rm =TRUE)) %>% arrange(retail_average) %>% head(6)
+
+top_retail1<-left_join(top_retail1,alldata,by="US") %>% select(US,sub_region_1,retail_average) %>% unique()
+```
+
+
+### Plots
+```{r,echo=FALSE}
+month_retail<- alldata %>%
+  mutate(month = format(date, "%m"),year = format(date,"%Y")) %>% group_by(US,month) %>%
+  summarise(reatil_mean= mean(retail_and_recreation_percent_change_from_baseline, na.rm =TRUE),.groups = 'keep') %>% 
+  filter(US %in% top_retail1$US)
+ggplot(month_retail,aes(month,reatil_mean,color = US))+
+  geom_point()+
+  facet_wrap(~US, labeller = labeller(US = 
+    c("CA" = "California",
+      "FL" = "Florida",
+      "NY" = "New York",
+      "PA" = "Pennsylvania",
+      "TX" = "Texas",
+      "VA" = "Virginia")))+
+  theme(axis.text.x = element_text(angle = 70, vjust = 0.5, hjust=1))+ scale_color_brewer(palette="Dark2")+
+  theme(legend.position="none")+
+  labs(title = "Retail Change during 2020", subtitle = "The following stats are the one who changed the most in US",y = "Retail and Recreation change")
+
+```
+
+Similar change in retail in those stats.
+
+
+### Focus on New York state\
+zooming our scope to NY.\
+The first case of COVID-19 in the U.S. state of New York during the pandemic was confirmed on March 1, 2020, and the state quickly became an epicenter of the pandemic, with a record 12,274 new cases reported on April 4 and approximately 29,000 more deaths reported for the month of April than the same month in 2019.\
+By April 10, New York had more confirmed cases than any country outside the US.\
+As of March 2, 2021, the state has reported 35 million tests, with 1,650,560 cumulative cases, and 47,247 deaths.\
+Government response to the pandemic in New York began with a **full lockdown** from *March 2020 to April 2020*, followed by a four-phase reopening plan by region from *April 2020 to July 2020*.
+```{r,echo=FALSE}
+x<-alldata%>%
+  filter(US=="NY")%>%
+  group_by(date) %>%
+  summarise(`retail_and_recreation_percent_change_from_baseline`  =    mean(retail_and_recreation_percent_change_from_baseline,na.rm=TRUE))
+
+ggplot(x,aes(date,retail_and_recreation_percent_change_from_baseline,color=ifelse(retail_and_recreation_percent_change_from_baseline < 0,'red','green')))+
+  scale_color_manual(labels = c("Positive", "Negative"), values = c("#00AFBB", "#FC4E07"))+
+  geom_point()+geom_smooth(method = "gam",color = "purple",formula = y ~ s(x, bs = "cs"))+
+  labs(title = "The change in retail and recreation", subtitle = "During Feb/20 - Jan/21", x="Date",y="Retail and recreation change (%)",color="change") + 
+  geom_vline(xintercept = as.numeric(x$date[c(16,47)]), linetype="dotted", 
+                color = "red", size=1.5)
+```
+
+It is obvious that in the beginning of March the was a huge drop in shopping and vacations, most likely because of the rise in the number of Covid-19 infected, which led to a full lockdown from March until April- *shows in* **red** *in the graph*.\
+NY number of cases are represented in the *graph below*.
+
+```{r,echo=FALSE}
+confirm_dates$Date<-as.Date(confirm_dates$Date,format = "%Y-%m-%d")
+
+B<-data.frame(date=confirm_dates[1:322,2],confirmed = confirm_dates[1:322,]$NY)
+ggplot(B,aes(date,confirmed,color=confirmed))+
+  geom_point()+
+  scale_color_gradient(low="#00AFBB" , high="#FC4E07")+
+  #+theme_bw()+
+  labs(title = "Covid-19 cases in New York",subtitle = "During March to August",y="confirmed number")
+  
+```
+\As describe before, there is a great change in confirmed cases around mid March until June. \
+Another interesting insight is that the rise in confirmed cases after October didn't correspond with similar decrease in retail.\
+
+### Regration Models
+
+preparing the data for the linear regration model.
+'new' column - finds the average value of each day with the 3 days before and after him
+```{r,echo=FALSE}
+modeldata<-full_join(B,x,by=c("date"="date")) %>% drop_na()
+
+
+for(i in 1:nrow(modeldata)){
+  slice1<-mean(slice(modeldata,ifelse(i-3>0,i-3,1):i,(i+1):ifelse(i+3>nrow(modeldata),nrow(modeldata),i+3))$retail_and_recreation_percent_change_from_baseline)
+  modeldata$new[i]<-
+    slice1
+}
+modeldata <- modeldata%>%select(new,confirmed)
+modeldata[60:67,]%>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+
+## regration 1
+```{r,model1,echo=FALSE}
+
+recipe_3 <- recipe(confirmed~new, data=modeldata) %>%
+  # step_log(retweets) %>% 
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors())
+
+model <- linear_reg() %>% set_engine("lm")
+
+wk_flow_3 <-workflow()%>%
+  add_model(model)%>%
+  add_recipe(recipe_3)
+
+set.seed(12)
+folds_3 <-vfold_cv(modeldata, v=5)
+
+set.seed(6112)
+fit_rs_3 <- wk_flow_3 %>%fit_resamples(folds_3)
+
+ny_collect <- collect_metrics(fit_rs_3)
+ny_collect%>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## First results
+
+The results of this model are not significant.\
+We can presume, according to the *graphs* above,that after the first 'wave' of confirmed cases, the 'second wave' didn't influenced as hard on the retail as the first wave did.\
+
+In order to check this theory we built another model, in **different time line** - from *March to October*.
+
+
+### Second regration model
+In this model we used the same data, but cut it until the beginning of the second wave, around October.
+```{r,echo=FALSE}
+modeldata2 <- modeldata[0:250,]
+tail(alldata[0:250,])%>%select(date,retail_and_recreation_percent_change_from_baseline) %>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+## Model 2
+```{r,model2,echo=FALSE}
+
+recipe_2 <- recipe(confirmed~new, data=modeldata2) %>%
+  # step_log(retweets) %>% 
+  step_center(all_numeric_predictors()) %>% 
+  step_scale(all_numeric_predictors())
+
+model <- linear_reg() %>% set_engine("lm")
+
+wk_flow_2 <-workflow()%>%
+  add_model(model)%>%
+  add_recipe(recipe_2)
+
+set.seed(12)
+folds_2 <-vfold_cv(modeldata2, v=5)
+
+set.seed(6112)
+fit_rs_2 <- wk_flow_2 %>%fit_resamples(folds_2)
+
+ny_collect_2 <- collect_metrics(fit_rs_2)
+ny_collect_2%>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+
+## Conclusions
+
+We can see very good correlation between the retail and recreation in NY and the number of positive to Covid-19, in the beginning of the epidemic. \
+As we can see from the first regration, if we will look throughout the whole epidemic time, the results wouldn't be as accurate, probably because of the shadowing around this disease at first.
